@@ -1,0 +1,6 @@
+﻿*.zip
+*.db3
+backend/target/
+target/
+.idea/
+*.jar

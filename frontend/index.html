@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>SLAM Viewer</title>
+    <style>
+        body { margin: 0; overflow: hidden; }
+        #info {
+            position: absolute;
+            top: 15px;
+            left: 15px;
+            color: #00ffcc;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: rgba(10, 20, 30, 0.75);
+            padding: 15px 20px;
+            border-radius: 8px;
+            border: 1px solid #005577;
+            pointer-events: none;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+            font-size: 14px;
+            line-height: 1.5;
+        }
+        #info span {
+            color: #ffffff;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+<div id="info">
+    Pose: <br>
+    X (offset): <span id="posX">0</span> <br>
+    Y (offset): <span id="posY">0</span> <br>
+    Height: <span id="height">0</span> <br>
+    Yaw: <span id="yaw">0</span> <br>
+    Pitch: <span id="pitch">0</span> <br>
+    Floor: <span id="floor">1</span> <br>
+    Time: <span id="timestamp"> - </span> <br>
+    Points: <span id="pointCount">0</span>
+</div>
+
+<script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+    }
+  }
+</script>
+
+<script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+    // Scene setup
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.body.appendChild(renderer.domElement);
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x111111);
+
+    const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+    camera.position.set(0, 15, 20);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+
+    // Grid helper
+    const gridHelper = new THREE.GridHelper(50, 50, 0x444444, 0x222222);
+    scene.add(gridHelper);
+
+    // Points material
+    const material = new THREE.PointsMaterial({ color: 0x00ff00, size: 0.1 });
+    let pointsMesh = null;
+    let positionsArray = new Float32Array(0);
+
+    // Pose marker (Humanoid figure)
+    const poseMarker = new THREE.Group();
+
+    // Body
+    const bodyGeom = new THREE.CylinderGeometry(0.3, 0.3, 1.2, 16);
+    const bodyMat = new THREE.MeshBasicMaterial({ color: 0x0088ff });
+    const body = new THREE.Mesh(bodyGeom, bodyMat);
+    body.position.y = 0.6;
+    poseMarker.add(body);
+
+    // Head
+    const headGeom = new THREE.SphereGeometry(0.3, 16, 16);
+    const headMat = new THREE.MeshBasicMaterial({ color: 0xffccaa });
+    const head = new THREE.Mesh(headGeom, headMat);
+    head.position.y = 1.5;
+    poseMarker.add(head);
+
+    // Nose/Eyes facing forward (Z axis)
+    const eyesGeom = new THREE.BoxGeometry(0.4, 0.1, 0.2);
+    const eyesMat = new THREE.MeshBasicMaterial({ color: 0x222222 });
+    const eyes = new THREE.Mesh(eyesGeom, eyesMat);
+    eyes.position.set(0, 1.5, 0.25);
+    poseMarker.add(eyes);
+
+    scene.add(poseMarker);
+
+    // Resize
+    window.addEventListener('resize', onWindowResize, false);
+    function onWindowResize() {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+    }
+
+    // WebSocket connect
+    const ws = new WebSocket('ws://localhost:8081/slam');
+    ws.binaryType = 'arraybuffer';
+
+    ws.onmessage = function (event) {
+        if (typeof event.data === 'string') {
+            const data = JSON.parse(event.data);
+            if (data.type === 'pose') {
+                updatePose(data);
+            }
+        } else if (event.data instanceof ArrayBuffer) {
+            handleBinaryData(event.data);
+        }
+    };
+
+    function updatePose(data) {
+        document.getElementById('posX').textContent = data.x.toFixed(2);
+        document.getElementById('posY').textContent = data.y.toFixed(2);
+        if (data.height !== undefined) {
+            document.getElementById('height').textContent = data.height.toFixed(2);
+        }
+        document.getElementById('yaw').textContent = data.yaw.toFixed(2);
+        document.getElementById('pitch').textContent = (data.pitch || 0).toFixed(2);
+        document.getElementById('floor').textContent = data.floor || 1;
+        if (data.timestamp) {
+            const date = new Date(data.timestamp);
+            document.getElementById('timestamp').textContent = date.toLocaleTimeString() + "." + date.getMilliseconds();
+        }
+
+        const heightVal = data.height !== undefined ? data.height : 0;
+        poseMarker.position.set(data.x, heightVal, data.y);
+        // yaw 0 = forward(-Z in Three.js coords), but given specs might differ.
+        // Assuming yaw=0 means +Z or -Z, and yaw increments rotate along Y axis.
+        poseMarker.rotation.set(
+            THREE.MathUtils.degToRad(data.pitch || 0),
+            THREE.MathUtils.degToRad(-data.yaw || 0),
+            0
+        );
+    }
+
+    function handleBinaryData(buffer) {
+        const dataView = new DataView(buffer);
+        const type = dataView.getUint8(0);
+        const numFloats = (buffer.byteLength - 1) / 4;
+        const newPositions = new Float32Array(numFloats);
+
+        for (let i = 0; i < numFloats; i++) {
+            newPositions[i] = dataView.getFloat32(1 + i * 4, true); // true for little-endian
+        }
+
+        if (type === 0x01) {
+            // Full map
+            positionsArray = newPositions;
+            createPointCloud(positionsArray);
+        } else if (type === 0x02) {
+            // Incremental map
+            const newArray = new Float32Array(positionsArray.length + newPositions.length);
+            newArray.set(positionsArray, 0);
+            newArray.set(newPositions, positionsArray.length);
+            positionsArray = newArray;
+            updatePointCloud(positionsArray);
+        }
+    }
+
+    function createPointCloud(positions) {
+        if (pointsMesh) {
+            scene.remove(pointsMesh);
+            pointsMesh.geometry.dispose();
+        }
+        const geom = new THREE.BufferGeometry();
+        geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        pointsMesh = new THREE.Points(geom, material);
+        scene.add(pointsMesh);
+        document.getElementById('pointCount').textContent = (positions.length / 3).toString();
+    }
+
+    function updatePointCloud(positions) {
+        if (!pointsMesh) {
+            createPointCloud(positions);
+            return;
+        }
+        pointsMesh.geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        document.getElementById('pointCount').textContent = (positions.length / 3).toString();
+    }
+
+    function animate() {
+        requestAnimationFrame(animate);
+        controls.update();
+        renderer.render(scene, camera);
+    }
+
+    animate();
+</script>
+</body>
+</html>
