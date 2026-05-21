@@ -1,153 +1,198 @@
 package com.example.slam;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
-import org.springframework.web.socket.BinaryMessage;
-import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.AbstractWebSocketHandler;
+
 import java.io.IOException;
-import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.Random;
+
 @Component
 public class SlamWebSocketHandler extends AbstractWebSocketHandler {
+
+    private static final Logger log = LoggerFactory.getLogger(SlamWebSocketHandler.class);
+
     private final List<WebSocketSession> sessions = new CopyOnWriteArrayList<>();
     private final ObjectMapper objectMapper = new ObjectMapper();
-    private final List<Float> allPoints = new ArrayList<>();
-    private final Random random = new Random();
-    // Mock trajectory
-    private float firefighterX = 0;
-    private float firefighterY = 1.2f; // Height
-    private float firefighterZ = 0;
-    private float firefighterYaw = 0; 
-    private float firefighterPitch = 0;
-    private int firefighterFloor = 1;
-    private long tickCount = 0;
+
+    @Autowired
+    private JsonlImuService jsonlImuService;
+
+    // 当前数据索引
+    private int currentIndex = 0;
+    private boolean isPlaying = true;
+
+    // 模拟位置（基于时间和简单积分）
+    private double posX = 0.0;
+    private double posY = 0.0;
+    private double posZ = 0.0;
+    private double lastTimestamp = -1;
+
     public SlamWebSocketHandler() {
     }
+
     @Override
     public void afterConnectionEstablished(WebSocketSession session) throws Exception {
         sessions.add(session);
-        sendFullMap(session);
+        log.info("WebSocket connection established: {}", session.getId());
+        // 发送第一条数据
+        sendImuData(session);
     }
+
     @Override
-    public void afterConnectionClosed(WebSocketSession session, CloseStatus status) throws Exception {
+    public void afterConnectionClosed(WebSocketSession session, org.springframework.web.socket.CloseStatus status) throws Exception {
         sessions.remove(session);
+        log.info("WebSocket connection closed: {}", session.getId());
     }
-    private void sendFullMap(WebSocketSession session) {
-        if (!session.isOpen()) return;
-        try {
-            int numFloats = allPoints.size();
-            ByteBuffer buffer = ByteBuffer.allocate(1 + numFloats * 4);
-            buffer.order(ByteOrder.LITTLE_ENDIAN);
-            buffer.put((byte) 0x01); 
-            for (Float f : allPoints) {
-                buffer.putFloat(f);
-            }
-            buffer.flip();
-            session.sendMessage(new BinaryMessage(buffer));
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-    }
-    @Scheduled(fixedRate = 100) 
+
+    @Scheduled(fixedRate = 100) // 每100ms发送一次数据
     public void sendData() {
-        if (sessions.isEmpty()) return;
-        tickCount++;
-        float speed = 0.05f; 
-        if (tickCount < 200) {
-            firefighterZ += speed;
-            firefighterPitch = 0;
-        } else if (tickCount < 300) {
-            firefighterYaw += 0.9f; 
-            firefighterX += speed * (float)Math.sin(Math.toRadians(firefighterYaw));
-            firefighterZ += speed * (float)Math.cos(Math.toRadians(firefighterYaw));
-            firefighterPitch = 0;
-        } else if (tickCount < 500) {
-            firefighterX += speed * (float)Math.sin(Math.toRadians(firefighterYaw));
-            firefighterZ += speed * (float)Math.cos(Math.toRadians(firefighterYaw));
-            firefighterY += speed * 0.3f; 
-            firefighterPitch = -20; 
-            firefighterFloor = 2; 
-        } else if (tickCount < 700) {
-            firefighterX += speed * (float)Math.sin(Math.toRadians(firefighterYaw));
-            firefighterZ += speed * (float)Math.cos(Math.toRadians(firefighterYaw));
-            firefighterPitch = 0;
-            firefighterFloor = 2;
-        } else if (tickCount < 900) {
-            firefighterYaw += 1.8f; 
-            firefighterX += speed * (float)Math.sin(Math.toRadians(firefighterYaw));
-            firefighterZ += speed * (float)Math.cos(Math.toRadians(firefighterYaw));
-            firefighterY -= speed * 0.3f; 
-            firefighterPitch = 20; 
-            firefighterFloor = 1;
-        } else {
-             tickCount = 0;
-             firefighterX = 0;
-             firefighterY = 1.2f;
-             firefighterZ = 0;
-             firefighterYaw = 0;
-             firefighterPitch = 0;
-             firefighterFloor = 1;
-             allPoints.clear();
-             sendFullMapToAll(); 
-             return;
-        }
-        Map<String, Object> pose = new HashMap<>();
-        pose.put("type", "pose");
-        pose.put("x", firefighterX);
-        pose.put("y", firefighterZ); // Z is horizontal offset, mapped to Y
-        pose.put("height", firefighterY);
-        pose.put("timestamp", System.currentTimeMillis());
-        pose.put("yaw", firefighterYaw);
-        pose.put("pitch", firefighterPitch);
-        pose.put("floor", firefighterFloor);
-        List<Float> newPoints = new ArrayList<>();
-        float leftWallX = firefighterX - 2.0f * (float)Math.cos(Math.toRadians(firefighterYaw)) + (random.nextFloat()-0.5f)*0.2f;
-        float leftWallZ = firefighterZ + 2.0f * (float)Math.sin(Math.toRadians(firefighterYaw)) + (random.nextFloat()-0.5f)*0.2f;
-        float wallY = firefighterY - 1.2f + random.nextFloat() * 3.0f; 
-        newPoints.add(leftWallX); newPoints.add(wallY); newPoints.add(leftWallZ);
-        float rightWallX = firefighterX + 2.0f * (float)Math.cos(Math.toRadians(firefighterYaw)) + (random.nextFloat()-0.5f)*0.2f;
-        float rightWallZ = firefighterZ - 2.0f * (float)Math.sin(Math.toRadians(firefighterYaw)) + (random.nextFloat()-0.5f)*0.2f;
-        float wallY2 = firefighterY - 1.2f + random.nextFloat() * 3.0f;
-        newPoints.add(rightWallX); newPoints.add(wallY2); newPoints.add(rightWallZ);
-        if (random.nextFloat() > 0.7) {
-            float debrisX = firefighterX + (random.nextFloat()-0.5f)*3f;
-            float debrisZ = firefighterZ + (random.nextFloat()-0.5f)*3f;
-            float debrisY = firefighterY - 1.2f + random.nextFloat() * 0.5f; 
-            newPoints.add(debrisX); newPoints.add(debrisY); newPoints.add(debrisZ);
-        }
-        for (Float f : newPoints) {
-            allPoints.add(f);
-        }
-        ByteBuffer buffer = ByteBuffer.allocate(1 + newPoints.size() * 4);
-        buffer.order(ByteOrder.LITTLE_ENDIAN);
-        buffer.put((byte) 0x02); 
-        for (Float f : newPoints) {
-            buffer.putFloat(f);
-        }
-        buffer.flip();
+        if (sessions.isEmpty() || !isPlaying) return;
+
+        // 广播给所有连接的客户端
         for (WebSocketSession session : sessions) {
             if (session.isOpen()) {
                 try {
-                    session.sendMessage(new TextMessage(objectMapper.writeValueAsString(pose)));
-                    session.sendMessage(new BinaryMessage(buffer));
+                    sendImuData(session);
                 } catch (IOException e) {
-                    e.printStackTrace();
+                    log.error("Failed to send data to session {}: {}", session.getId(), e.getMessage());
                 }
             }
         }
-    }
-    private void sendFullMapToAll() {
-        for (WebSocketSession session : sessions) {
-            sendFullMap(session);
+
+        // 推进到下一帧
+        currentIndex++;
+        int totalEntries = jsonlImuService.getTotalEntryCount();
+        if (totalEntries > 0 && currentIndex >= totalEntries) {
+            currentIndex = 0; // 循环播放
+            resetPosition();
+            log.info("Reached end of data, looping back to start");
         }
+    }
+
+    private void sendImuData(WebSocketSession session) throws IOException {
+        int totalEntries = jsonlImuService.getTotalEntryCount();
+        if (totalEntries == 0) {
+            log.warn("No IMU data available");
+            return;
+        }
+
+        // 确保索引在有效范围内
+        if (currentIndex >= totalEntries) {
+            currentIndex = 0;
+        }
+
+        JsonlImuService.ImuDataEntry entry = jsonlImuService.getImuDataByIndex(currentIndex);
+        if (entry == null) return;
+
+        // 计算位移（简化：基于加速度积分）
+        updatePosition(entry);
+
+        // 1. 发送Pose消息（包含位置和朝向）
+        Map<String, Object> pose = new HashMap<>();
+        pose.put("type", "pose");
+        pose.put("timestamp", entry.systemTime);
+        pose.put("x", posX);
+        pose.put("y", posY);
+        pose.put("height", posZ);
+        pose.put("yaw", entry.yaw);
+        pose.put("pitch", entry.pitch);
+        pose.put("roll", entry.roll);
+
+        // 添加四元数
+        Map<String, double[]> quatMap = new HashMap<>();
+        quatMap.put("quat", entry.quat);
+        pose.putAll(quatMap);
+
+        session.sendMessage(new TextMessage(objectMapper.writeValueAsString(pose)));
+
+        // 2. 发送IMU原始数据消息
+        Map<String, Object> imu = new HashMap<>();
+        imu.put("type", "imu");
+        imu.put("timestamp", entry.systemTime);
+        imu.put("acc", entry.acc);
+        imu.put("gyr", entry.gyr);
+        imu.put("mag", entry.mag);
+
+        session.sendMessage(new TextMessage(objectMapper.writeValueAsString(imu)));
+
+        if (currentIndex % 10 == 0) {
+            log.debug("Sent frame {}/{}: timestamp={}", currentIndex, totalEntries, entry.systemTime);
+        }
+    }
+
+    /**
+     * 基于加速度数据更新位置（简化积分）
+     * 注意：真实场景需要复杂的传感器融合算法
+     */
+    private void updatePosition(JsonlImuService.ImuDataEntry entry) {
+        if (lastTimestamp < 0) {
+            lastTimestamp = entry.systemTime;
+            return;
+        }
+
+        // 计算时间差（毫秒转秒）
+        double dt = (entry.systemTime - lastTimestamp) / 1000.0;
+        if (dt <= 0) dt = 0.1; // 默认100ms
+
+        // 简化：假设沿着yaw方向前进
+        // 真实场景需要基于加速度二次积分 + 磁力计/陀螺仪融合
+        double speed = 0.5; // 假设速度 0.5 m/s
+        double yawRad = Math.toRadians(entry.yaw);
+
+        // 更新位置（基于yaw方向前进）
+        posX += speed * dt * Math.sin(yawRad);
+        posY += speed * dt * Math.cos(yawRad);
+
+        // 高度保持不变（或基于气压计数据）
+        posZ = 1.2;
+
+        lastTimestamp = entry.systemTime;
+    }
+
+    private void resetPosition() {
+        posX = 0.0;
+        posY = 0.0;
+        posZ = 1.2;
+        lastTimestamp = -1;
+    }
+
+    /**
+     * 控制播放/暂停
+     */
+    public void togglePlayPause() {
+        isPlaying = !isPlaying;
+        log.info("Playback {}", isPlaying ? "resumed" : "paused");
+    }
+
+    /**
+     * 跳转到指定索引
+     */
+    public void seekTo(int index) {
+        int totalEntries = jsonlImuService.getTotalEntryCount();
+        if (totalEntries == 0) return;
+
+        currentIndex = Math.max(0, Math.min(index, totalEntries - 1));
+        log.info("Seek to frame {}/{}", currentIndex, totalEntries);
+    }
+
+    /**
+     * 获取当前状态
+     */
+    public Map<String, Object> getStatus() {
+        Map<String, Object> status = new HashMap<>();
+        status.put("currentIndex", currentIndex);
+        status.put("totalEntries", jsonlImuService.getTotalEntryCount());
+        status.put("isPlaying", isPlaying);
+        return status;
     }
 }

@@ -2,205 +2,603 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>SLAM Viewer</title>
+    <title>IMU Viewer - 室内定位可视化</title>
     <style>
-        body { margin: 0; overflow: hidden; }
+        body { margin: 0; overflow: hidden; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        
+        /* 信息面板 - 左上角 */
         #info {
             position: absolute;
             top: 15px;
             left: 15px;
             color: #00ffcc;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: rgba(10, 20, 30, 0.75);
+            background: rgba(10, 20, 30, 0.85);
             padding: 15px 20px;
             border-radius: 8px;
             border: 1px solid #005577;
             pointer-events: none;
             box-shadow: 0 4px 6px rgba(0,0,0,0.3);
-            font-size: 14px;
-            line-height: 1.5;
+            font-size: 13px;
+            line-height: 1.6;
+            min-width: 250px;
+            z-index: 100;
         }
         #info span {
             color: #ffffff;
             font-weight: bold;
         }
+        #info h3 {
+            margin: 5px 0;
+            color: #00ffcc;
+            font-size: 14px;
+        }
+
+        /* 传感器曲线图面板 - 右侧 */
+        #charts-panel {
+            position: absolute;
+            top: 15px;
+            right: 15px;
+            width: 450px;
+            background: rgba(10, 20, 30, 0.85);
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid #005577;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+            max-height: 90vh;
+            overflow-y: auto;
+            z-index: 100;
+        }
+        #charts-panel h3 {
+            color: #00ffcc;
+            margin: 0 0 10px 0;
+            font-size: 14px;
+            border-bottom: 1px solid #005577;
+            padding-bottom: 5px;
+        }
+        #charts-panel canvas {
+            width: 100% !important;
+            height: 150px !important;
+            margin-bottom: 15px;
+            background: rgba(20, 30, 40, 0.5);
+            border-radius: 4px;
+        }
+
+        /* 控制面板 - 底部中央 */
+        #control-panel {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(10, 20, 30, 0.9);
+            padding: 12px 20px;
+            border-radius: 8px;
+            border: 1px solid #005577;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            z-index: 100;
+        }
+        #control-panel button {
+            background: #005577;
+            color: #00ffcc;
+            border: 1px solid #00ffcc;
+            padding: 8px 15px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 13px;
+            transition: all 0.3s;
+        }
+        #control-panel button:hover {
+            background: #00ffcc;
+            color: #111111;
+        }
+        #control-panel button.active {
+            background: #00ffcc;
+            color: #111111;
+        }
+        #control-panel input[type="range"] {
+            width: 150px;
+        }
+        #control-panel label {
+            color: #00ffcc;
+            font-size: 12px;
+        }
+
+        /* 连接状态指示 */
+        #connection-status {
+            position: absolute;
+            top: 15px;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 8px 15px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: bold;
+            z-index: 100;
+        }
+        #connection-status.connected {
+            background: rgba(0, 255, 100, 0.2);
+            color: #00ff64;
+            border: 1px solid #00ff64;
+        }
+        #connection-status.disconnected {
+            background: rgba(255, 0, 0, 0.2);
+            color: #ff0000;
+            border: 1px solid #ff0000;
+        }
     </style>
 </head>
 <body>
-<div id="info">
-    Pose: <br>
-    X (offset): <span id="posX">0</span> <br>
-    Y (offset): <span id="posY">0</span> <br>
-    Height: <span id="height">0</span> <br>
-    Yaw: <span id="yaw">0</span> <br>
-    Pitch: <span id="pitch">0</span> <br>
-    Floor: <span id="floor">1</span> <br>
-    Time: <span id="timestamp"> - </span> <br>
-    Points: <span id="pointCount">0</span>
-</div>
+    <!-- 连接状态 -->
+    <div id="connection-status" class="disconnected">🔴 断开连接</div>
 
-<script type="importmap">
-  {
-    "imports": {
-      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+    <!-- 信息面板 -->
+    <div id="info">
+        <h3>📍 位姿信息</h3>
+        X: <span id="posX">0.00</span> m<br>
+        Y: <span id="posY">0.00</span> m<br>
+        Height: <span id="height">0.00</span> m<br>
+        Yaw: <span id="yaw">0.00</span>°<br>
+        Pitch: <span id="pitch">0.00</span>°<br>
+        Roll: <span id="roll">0.00</span>°<br>
+        <br>
+        <h3>📊 IMU数据</h3>
+        Acc X: <span id="accX">0.00</span> m/s²<br>
+        Acc Y: <span id="accY">0.00</span> m/s²<br>
+        Acc Z: <span id="accZ">0.00</span> m/s²<br>
+        Gyr X: <span id="gyrX">0.00</span> rad/s<br>
+        Gyr Y: <span id="gyrY">0.00</span> rad/s<br>
+        Gyr Z: <span id="gyrZ">0.00</span> rad/s<br>
+        <br>
+        <small>Time: <span id="timestamp">-</span></small>
+    </div>
+
+    <!-- 传感器曲线图面板 -->
+    <div id="charts-panel">
+        <h3>📈 加速度计 (Accelerometer)</h3>
+        <canvas id="accChart"></canvas>
+        
+        <h3>📉 陀螺仪 (Gyroscope)</h3>
+        <canvas id="gyrChart"></canvas>
+        
+        <h3>🧭 磁力计 (Magnetometer)</h3>
+        <canvas id="magChart"></canvas>
+    </div>
+
+    <!-- 控制面板 -->
+    <div id="control-panel">
+        <button id="btnPlayPause">⏸️ 暂停</button>
+        <button id="btnReset">🔄 重置</button>
+        <label>
+            速度: <input type="range" id="speedSlider" min="0.1" max="5" step="0.1" value="1">
+            <span id="speedValue">1.0x</span>
+        </label>
+        <label>
+            <input type="checkbox" id="showTrajectory" checked> 显示轨迹
+        </label>
+        <label>
+            <input type="checkbox" id="showDirection" checked> 显示朝向
+        </label>
+    </div>
+
+    <!-- Three.js 导入映射 -->
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+        }
     }
-  }
-</script>
+    </script>
 
-<script type="module">
-    import * as THREE from 'three';
-    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
-    // Scene setup
-    const renderer = new THREE.WebGLRenderer({ antialias: true });
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    document.body.appendChild(renderer.domElement);
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
-    const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x111111);
-
-    const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-    camera.position.set(0, 15, 20);
-
-    const controls = new OrbitControls(camera, renderer.domElement);
-    controls.enableDamping = true;
-
-    // Grid helper
-    const gridHelper = new THREE.GridHelper(50, 50, 0x444444, 0x222222);
-    scene.add(gridHelper);
-
-    // Points material
-    const material = new THREE.PointsMaterial({ color: 0x00ff00, size: 0.1 });
-    let pointsMesh = null;
-    let positionsArray = new Float32Array(0);
-
-    // Pose marker (Humanoid figure)
-    const poseMarker = new THREE.Group();
-
-    // Body
-    const bodyGeom = new THREE.CylinderGeometry(0.3, 0.3, 1.2, 16);
-    const bodyMat = new THREE.MeshBasicMaterial({ color: 0x0088ff });
-    const body = new THREE.Mesh(bodyGeom, bodyMat);
-    body.position.y = 0.6;
-    poseMarker.add(body);
-
-    // Head
-    const headGeom = new THREE.SphereGeometry(0.3, 16, 16);
-    const headMat = new THREE.MeshBasicMaterial({ color: 0xffccaa });
-    const head = new THREE.Mesh(headGeom, headMat);
-    head.position.y = 1.5;
-    poseMarker.add(head);
-
-    // Nose/Eyes facing forward (Z axis)
-    const eyesGeom = new THREE.BoxGeometry(0.4, 0.1, 0.2);
-    const eyesMat = new THREE.MeshBasicMaterial({ color: 0x222222 });
-    const eyes = new THREE.Mesh(eyesGeom, eyesMat);
-    eyes.position.set(0, 1.5, 0.25);
-    poseMarker.add(eyes);
-
-    scene.add(poseMarker);
-
-    // Resize
-    window.addEventListener('resize', onWindowResize, false);
-    function onWindowResize() {
-        camera.aspect = window.innerWidth / window.innerHeight;
-        camera.updateProjectionMatrix();
+        // ============================================
+        // 场景初始化
+        // ============================================
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
         renderer.setSize(window.innerWidth, window.innerHeight);
-    }
+        renderer.setClearColor(0x111111);
+        document.body.appendChild(renderer.domElement);
 
-    // WebSocket connect
-    const ws = new WebSocket('ws://localhost:8081/slam');
-    ws.binaryType = 'arraybuffer';
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x111111);
 
-    ws.onmessage = function (event) {
-        if (typeof event.data === 'string') {
-            const data = JSON.parse(event.data);
-            if (data.type === 'pose') {
-                updatePose(data);
-            }
-        } else if (event.data instanceof ArrayBuffer) {
-            handleBinaryData(event.data);
-        }
-    };
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(10, 15, 20);
+        camera.lookAt(0, 0, 0);
 
-    function updatePose(data) {
-        document.getElementById('posX').textContent = data.x.toFixed(2);
-        document.getElementById('posY').textContent = data.y.toFixed(2);
-        if (data.height !== undefined) {
-            document.getElementById('height').textContent = data.height.toFixed(2);
-        }
-        document.getElementById('yaw').textContent = data.yaw.toFixed(2);
-        document.getElementById('pitch').textContent = (data.pitch || 0).toFixed(2);
-        document.getElementById('floor').textContent = data.floor || 1;
-        if (data.timestamp) {
-            const date = new Date(data.timestamp);
-            document.getElementById('timestamp').textContent = date.toLocaleTimeString() + "." + date.getMilliseconds();
-        }
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.target.set(0, 0, 0);
 
-        const heightVal = data.height !== undefined ? data.height : 0;
-        poseMarker.position.set(data.x, heightVal, data.y);
-        // yaw 0 = forward(-Z in Three.js coords), but given specs might differ.
-        // Assuming yaw=0 means +Z or -Z, and yaw increments rotate along Y axis.
-        poseMarker.rotation.set(
-            THREE.MathUtils.degToRad(data.pitch || 0),
-            THREE.MathUtils.degToRad(-data.yaw || 0),
-            0
+        // 网格辅助
+        const gridHelper = new THREE.GridHelper(50, 50, 0x444444, 0x222222);
+        scene.add(gridHelper);
+
+        // 坐标轴辅助
+        const axesHelper = new THREE.AxesHelper(5);
+        scene.add(axesHelper);
+
+        // ============================================
+        // 人员模型 (Pose Marker)
+        // ============================================
+        const poseMarker = new THREE.Group();
+
+        // 身体（圆柱体）
+        const bodyGeom = new THREE.CylinderGeometry(0.3, 0.3, 1.2, 16);
+        const bodyMat = new THREE.MeshBasicMaterial({ color: 0x0088ff });
+        const body = new THREE.Mesh(bodyGeom, bodyMat);
+        body.position.y = 0.6;
+        poseMarker.add(body);
+
+        // 头部（球体）
+        const headGeom = new THREE.SphereGeometry(0.3, 16, 16);
+        const headMat = new THREE.MeshBasicMaterial({ color: 0xffccaa });
+        const head = new THREE.Mesh(headGeom, headMat);
+        head.position.y = 1.5;
+        poseMarker.add(head);
+
+        // 眼睛（指示朝向）
+        const eyesGeom = new THREE.BoxGeometry(0.4, 0.1, 0.2);
+        const eyesMat = new THREE.MeshBasicMaterial({ color: 0x222222 });
+        const eyes = new THREE.Mesh(eyesGeom, eyesMat);
+        eyes.position.set(0, 1.5, 0.25);
+        poseMarker.add(eyes);
+
+        // 朝向箭头（红色锥体）
+        const directionCone = new THREE.Group();
+        const coneGeom = new THREE.ConeGeometry(0.15, 0.8, 16);
+        const coneMat = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+        const cone = new THREE.Mesh(coneGeom, coneMat);
+        cone.rotation.x = Math.PI / 2; // 指向Z轴
+        cone.position.z = -0.5;
+        directionCone.add(cone);
+        poseMarker.add(directionCone);
+
+        // 朝向箭头（更明显的版本）
+        const arrowHelper = new THREE.ArrowHelper(
+            new THREE.Vector3(0, 0, -1), // 指向-Z轴
+            new THREE.Vector3(0, 1.2, 0), // 起点在人员胸前
+            1.5, // 长度
+            0xff0000, // 红色
+            0.3, // 箭头头部长度
+            0.2 // 箭头头部宽度
         );
-    }
+        poseMarker.add(arrowHelper);
 
-    function handleBinaryData(buffer) {
-        const dataView = new DataView(buffer);
-        const type = dataView.getUint8(0);
-        const numFloats = (buffer.byteLength - 1) / 4;
-        const newPositions = new Float32Array(numFloats);
+        scene.add(poseMarker);
 
-        for (let i = 0; i < numFloats; i++) {
-            newPositions[i] = dataView.getFloat32(1 + i * 4, true); // true for little-endian
+        // ============================================
+        // 轨迹路径
+        // ============================================
+        const trajectoryPoints = [];
+        const trajectoryGeometry = new THREE.BufferGeometry();
+        const trajectoryMaterial = new THREE.LineBasicMaterial({ 
+            color: 0xffff00, 
+            opacity: 0.8, 
+            transparent: true 
+        });
+        let trajectoryLine = new THREE.Line(trajectoryGeometry, trajectoryMaterial);
+        scene.add(trajectoryLine);
+
+        // ============================================
+        // Chart.js 传感器曲线图
+        // ============================================
+        const maxDataPoints = 200; // 最多显示200个数据点
+
+        // 加速度计图表
+        const accCtx = document.getElementById('accChart').getContext('2d');
+        const accChart = new Chart(accCtx, {
+            type: 'line',
+            data: {
+                datasets: [
+                    { label: 'Acc X', data: [], borderColor: '#ff0000', borderWidth: 1, pointRadius: 0 },
+                    { label: 'Acc Y', data: [], borderColor: '#00ff00', borderWidth: 1, pointRadius: 0 },
+                    { label: 'Acc Z', data: [], borderColor: '#0088ff', borderWidth: 1, pointRadius: 0 }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: false,
+                scales: {
+                    x: { display: false },
+                    y: { 
+                        display: true, 
+                        min: -20, 
+                        max: 20,
+                        grid: { color: 'rgba(255,255,255,0.1)' },
+                        ticks: { color: '#00ffcc', font: { size: 10 } }
+                    }
+                },
+                plugins: { legend: { display: false } }
+            }
+        });
+
+        // 陀螺仪图表
+        const gyrCtx = document.getElementById('gyrChart').getContext('2d');
+        const gyrChart = new Chart(gyrCtx, {
+            type: 'line',
+            data: {
+                datasets: [
+                    { label: 'Gyr X', data: [], borderColor: '#ff8800', borderWidth: 1, pointRadius: 0 },
+                    { label: 'Gyr Y', data: [], borderColor: '#ff00ff', borderWidth: 1, pointRadius: 0 },
+                    { label: 'Gyr Z', data: [], borderColor: '#00ffff', borderWidth: 1, pointRadius: 0 }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: false,
+                scales: {
+                    x: { display: false },
+                    y: { 
+                        display: true, 
+                        min: -1, 
+                        max: 1,
+                        grid: { color: 'rgba(255,255,255,0.1)' },
+                        ticks: { color: '#00ffcc', font: { size: 10 } }
+                    }
+                },
+                plugins: { legend: { display: false } }
+            }
+        });
+
+        // 磁力计图表
+        const magCtx = document.getElementById('magChart').getContext('2d');
+        const magChart = new Chart(magCtx, {
+            type: 'line',
+            data: {
+                datasets: [
+                    { label: 'Mag X', data: [], borderColor: '#ffff00', borderWidth: 1, pointRadius: 0 },
+                    { label: 'Mag Y', data: [], borderColor: '#ff88ff', borderWidth: 1, pointRadius: 0 },
+                    { label: 'Mag Z', data: [], borderColor: '#ffffff', borderWidth: 1, pointRadius: 0 }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: false,
+                scales: {
+                    x: { display: false },
+                    y: { 
+                        display: true, 
+                        min: -100, 
+                        max: 100,
+                        grid: { color: 'rgba(255,255,255,0.1)' },
+                        ticks: { color: '#00ffcc', font: { size: 10 } }
+                    }
+                },
+                plugins: { legend: { display: false } }
+            }
+        });
+
+        // 更新图表数据
+        function updateChart(chart, newData, timestamp) {
+            const dataset = chart.data.datasets[0];
+            
+            // 添加新数据点
+            dataset.data.push({ x: timestamp, y: newData[0] });
+            chart.data.datasets[1].data.push({ x: timestamp, y: newData[1] });
+            chart.data.datasets[2].data.push({ x: timestamp, y: newData[2] });
+
+            // 限制数据点数量
+            if (dataset.data.length > maxDataPoints) {
+                dataset.data.shift();
+                chart.data.datasets[1].data.shift();
+                chart.data.datasets[2].data.shift();
+            }
+
+            chart.update('none'); // 不使用动画以提高性能
         }
 
-        if (type === 0x01) {
-            // Full map
-            positionsArray = newPositions;
-            createPointCloud(positionsArray);
-        } else if (type === 0x02) {
-            // Incremental map
-            const newArray = new Float32Array(positionsArray.length + newPositions.length);
-            newArray.set(positionsArray, 0);
-            newArray.set(newPositions, positionsArray.length);
-            positionsArray = newArray;
-            updatePointCloud(positionsArray);
+        // ============================================
+        // WebSocket 连接
+        // ============================================
+        const ws = new WebSocket('ws://localhost:8081/slam');
+        let isConnected = false;
+
+        ws.onopen = function() {
+            console.log('✅ WebSocket连接成功');
+            isConnected = true;
+            document.getElementById('connection-status').className = 'connected';
+            document.getElementById('connection-status').textContent = '🟢 已连接';
+        };
+
+        ws.onclose = function() {
+            console.log('❌ WebSocket连接关闭');
+            isConnected = false;
+            document.getElementById('connection-status').className = 'disconnected';
+            document.getElementById('connection-status').textContent = '🔴 断开连接';
+        };
+
+        ws.onerror = function(error) {
+            console.error('WebSocket错误:', error);
+        };
+
+        // 处理接收到的数据
+        ws.onmessage = function (event) {
+            if (typeof event.data === 'string') {
+                const data = JSON.parse(event.data);
+                
+                if (data.type === 'pose') {
+                    updatePose(data);
+                    updateTrajectory(data.x, data.y, data.height);
+                } else if (data.type === 'imu') {
+                    updateImuData(data);
+                }
+            }
+        };
+
+        // ============================================
+        // 更新函数
+        // ============================================
+
+        // 更新位姿
+        function updatePose(data) {
+            // 更新UI显示
+            document.getElementById('posX').textContent = data.x.toFixed(2);
+            document.getElementById('posY').textContent = data.y.toFixed(2);
+            if (data.height !== undefined) {
+                document.getElementById('height').textContent = data.height.toFixed(2);
+            }
+            document.getElementById('yaw').textContent = data.yaw.toFixed(2);
+            document.getElementById('pitch').textContent = (data.pitch || 0).toFixed(2);
+            document.getElementById('roll').textContent = (data.roll || 0).toFixed(2);
+            
+            if (data.timestamp) {
+                const date = new Date(data.timestamp / 1000000); // 转换纳秒到毫秒
+                document.getElementById('timestamp').textContent = 
+                    date.toLocaleTimeString() + '.' + String(date.getMilliseconds()).padStart(3, '0');
+            }
+
+            // 更新3D模型位置和朝向
+            const heightVal = data.height !== undefined ? data.height : 0;
+            poseMarker.position.set(data.x, heightVal, data.y);
+            
+            // 使用四元数或欧拉角更新旋转
+            if (data.quat) {
+                // 使用四元数（更精确）
+                const quat = new THREE.Quaternion(data.quat[1], data.quat[2], data.quat[3], data.quat[0]);
+                poseMarker.quaternion.copy(quat);
+            } else {
+                // 使用欧拉角
+                poseMarker.rotation.set(
+                    THREE.MathUtils.degToRad(data.pitch || 0),
+                    THREE.MathUtils.degToRad(-data.yaw || 0),
+                    THREE.MathUtils.degToRad(data.roll || 0),
+                    'YXZ' // 旋转顺序
+                );
+            }
         }
-    }
 
-    function createPointCloud(positions) {
-        if (pointsMesh) {
-            scene.remove(pointsMesh);
-            pointsMesh.geometry.dispose();
+        // 更新IMU数据
+        function updateImuData(data) {
+            if (!data.timestamp) return;
+            
+            // 更新UI显示
+            if (data.acc) {
+                document.getElementById('accX').textContent = data.acc[0].toFixed(2);
+                document.getElementById('accY').textContent = data.acc[1].toFixed(2);
+                document.getElementById('accZ').textContent = data.acc[2].toFixed(2);
+                
+                // 更新图表
+                updateChart(accChart, data.acc, data.timestamp);
+            }
+            
+            if (data.gyr) {
+                document.getElementById('gyrX').textContent = data.gyr[0].toFixed(3);
+                document.getElementById('gyrY').textContent = data.gyr[1].toFixed(3);
+                document.getElementById('gyrZ').textContent = data.gyr[2].toFixed(3);
+                
+                updateChart(gyrChart, data.gyr, data.timestamp);
+            }
+            
+            if (data.mag) {
+                updateChart(magChart, data.mag, data.timestamp);
+            }
         }
-        const geom = new THREE.BufferGeometry();
-        geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-        pointsMesh = new THREE.Points(geom, material);
-        scene.add(pointsMesh);
-        document.getElementById('pointCount').textContent = (positions.length / 3).toString();
-    }
 
-    function updatePointCloud(positions) {
-        if (!pointsMesh) {
-            createPointCloud(positions);
-            return;
+        // 更新轨迹
+        function updateTrajectory(x, y, z) {
+            if (!document.getElementById('showTrajectory').checked) return;
+
+            const point = new THREE.Vector3(x, z || 0, y);
+            trajectoryPoints.push(point);
+            
+            // 限制轨迹点数量
+            if (trajectoryPoints.length > 1000) {
+                trajectoryPoints.shift();
+            }
+
+            // 更新轨迹线
+            trajectoryGeometry.setFromPoints(trajectoryPoints);
         }
-        pointsMesh.geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-        document.getElementById('pointCount').textContent = (positions.length / 3).toString();
-    }
 
-    function animate() {
-        requestAnimationFrame(animate);
-        controls.update();
-        renderer.render(scene, camera);
-    }
+        // ============================================
+        // 控制面板事件
+        // ============================================
+        document.getElementById('btnPlayPause').addEventListener('click', function() {
+            // 发送播放/暂停命令到后端
+            if (ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ command: 'togglePlayPause' }));
+            }
+            
+            const btn = document.getElementById('btnPlayPause');
+            if (btn.textContent.includes('暂停')) {
+                btn.textContent = '▶️ 播放';
+                btn.classList.remove('active');
+            } else {
+                btn.textContent = '⏸️ 暂停';
+                btn.classList.add('active');
+            }
+        });
 
-    animate();
-</script>
+        document.getElementById('btnReset').addEventListener('click', function() {
+            if (ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ command: 'reset' }));
+            }
+            
+            // 清空轨迹
+            trajectoryPoints.length = 0;
+            trajectoryGeometry.setFromPoints([]);
+            
+            // 重置图表
+            accChart.data.datasets.forEach(dataset => dataset.data = []);
+            gyrChart.data.datasets.forEach(dataset => dataset.data = []);
+            magChart.data.datasets.forEach(dataset => dataset.data = []);
+            accChart.update();
+            gyrChart.update();
+            magChart.update();
+        });
+
+        document.getElementById('speedSlider').addEventListener('input', function() {
+            const speed = parseFloat(this.value);
+            document.getElementById('speedValue').textContent = speed.toFixed(1) + 'x';
+            
+            if (ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ command: 'setSpeed', speed: speed }));
+            }
+        });
+
+        document.getElementById('showTrajectory').addEventListener('change', function() {
+            trajectoryLine.visible = this.checked;
+        });
+
+        document.getElementById('showDirection').addEventListener('change', function() {
+            arrowHelper.visible = this.checked;
+            directionCone.visible = this.checked;
+        });
+
+        // ============================================
+        // 窗口resize
+        // ============================================
+        window.addEventListener('resize', onWindowResize, false);
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        // ============================================
+        // 动画循环
+        // ============================================
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            renderer.render(scene, camera);
+        }
+
+        animate();
+
+        console.log('🚀 IMU Viewer 初始化完成');
+    </script>
 </body>
 </html>
